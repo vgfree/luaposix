@@ -701,6 +701,142 @@ Pgetuid(lua_State *L)
 	return pushintegerresult(getuid());
 }
 
+/***
+Initialize the supplementary group access list.
+@function initgroups
+@string username The name of the user
+@int gid The base group ID
+@treturn boolean true on success, or nil, error message, errno on failure
+@see initgroups(3)
+*/
+static int
+Pinitgroups(lua_State *L)
+{
+	checknargs(L, 2);
+	const char *username = luaL_checkstring(L, 1);
+	gid_t gid = (gid_t)luaL_checkinteger(L, 2);
+#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+	int result = initgroups(username, gid);
+	if (result == -1) {
+		lua_pushnil(L);
+		lua_pushstring(L, strerror(errno));
+		lua_pushinteger(L, errno);
+		return 3;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+#else
+	lua_pushnil(L);
+	lua_pushstring(L, "initgroups not supported on this platform");
+	lua_pushinteger(L, ENOSYS);
+	return 3;
+#endif
+}
+
+
+/***
+Get the list of supplementary group IDs for a user.
+@function getgrouplist
+@param username string The name of the user
+@param gid int The base group ID
+@treturn table list of group IDs on success, or nil, error message, errno on failure
+@see getgrouplist(3)
+*/
+static int
+Pgetgrouplist(lua_State *L)
+{
+	checknargs(L, 2);
+	const char *username = luaL_checkstring(L, 1);
+	gid_t gid = (gid_t)luaL_checkinteger(L, 2);
+#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+	int ngroups = NGROUPS_MAX;
+	gid_t groups[NGROUPS_MAX];
+	int result;
+
+	result = getgrouplist(username, gid, groups, &ngroups);
+	if (result == -1) {
+		lua_pushnil(L);
+		lua_pushstring(L, strerror(errno));
+		lua_pushinteger(L, errno);
+		return 3;
+	}
+
+	lua_newtable(L);
+	for (int i = 0; i < ngroups; i++) {
+		lua_pushinteger(L, i + 1);
+		lua_pushinteger(L, groups[i]);
+		lua_settable(L, -3);
+	}
+	return 1;
+#else
+	lua_pushnil(L);
+	lua_pushstring(L, "getgrouplist not supported on this platform");
+	lua_pushinteger(L, ENOSYS);
+	return 3;
+#endif
+}
+
+
+/***
+Set the supplementary group access list.
+@function setgroups
+@param groups table List of group IDs
+@treturn boolean true on success, or nil, error message, errno on failure
+@see setgroups(3)
+*/
+static int
+Psetgroups(lua_State *L)
+{
+	checknargs(L, 1);
+	if (!lua_istable(L, 1)) {
+		lua_pushnil(L);
+		lua_pushstring(L, "argument must be a table of group IDs");
+		return 2;
+	}
+#if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+	int ngroups = lua_rawlen(L, 1);
+	if (ngroups == 0) {
+		lua_pushnil(L);
+		lua_pushstring(L, "group list cannot be empty");
+		return 2;
+	}
+	if (ngroups > NGROUPS_MAX) {
+		lua_pushnil(L);
+		lua_pushstring(L, "too many groups");
+		lua_pushinteger(L, EINVAL);
+		return 3;
+	}
+	gid_t groups[NGROUPS_MAX];
+
+	for (int i = 1; i <= ngroups; i++) {
+		lua_rawgeti(L, 1, i);
+		if (!lua_isnumber(L, -1)) {
+			lua_pushnil(L);
+			lua_pushstring(L, "group IDs must be numbers");
+			return 2;
+		}
+		groups[i - 1] = (gid_t)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+	}
+
+	int result = setgroups(ngroups, groups);
+	if (result == -1) {
+		lua_pushnil(L);
+		lua_pushstring(L, strerror(errno));
+		lua_pushinteger(L, errno);
+		return 3;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+#else
+	lua_pushnil(L);
+	lua_pushstring(L, "setgroups not supported on this platform");
+	lua_pushinteger(L, ENOSYS);
+	return 3;
+#endif
+}
+
+
 
 /***
 Get host id.
@@ -1324,6 +1460,9 @@ static const luaL_Reg posix_unistd_fns[] =
 	LPOSIX_FUNC( Pgetpid		),
 	LPOSIX_FUNC( Pgetppid		),
 	LPOSIX_FUNC( Pgetuid		),
+	LPOSIX_FUNC( Pinitgroups	),
+	LPOSIX_FUNC( Pgetgrouplist	),
+	LPOSIX_FUNC( Psetgroups		),
 	LPOSIX_FUNC( Pgethostid		),
 	LPOSIX_FUNC( Pisatty		),
 #if LPOSIX_2001_COMPLIANT
